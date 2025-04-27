@@ -2,15 +2,17 @@ const express = require('express');
 const querystring = require('querystring');
 const axios = require('axios');
 const dotenv = require('dotenv');
+const cors = require('cors');
 
 dotenv.config(); // Load environment variables from .env file
 
 const app = express();
+app.use(cors()); // Enable CORS for all routes
 
 const client_id = process.env.CLIENT_ID; // Ensure CLIENT_ID is set in environment variables
 const client_secret = process.env.CLIENT_SECRET; // Ensure CLIENT_SECRET is set in environment variables
 const openrouter_api_key = process.env.OPENROUTER_API_KEY; // Ensure OPENROUTER_API_KEY is set in environment variables
-const redirect_uri = 'http://127.0.0.1:5000/callback'; // Update this if your redirect URI changes
+const redirect_uri = 'http://127.0.0.1:3000/home'; // Update this if your redirect URI changes
 
 const generateRandomString = (length) => {
     let text = '';
@@ -41,7 +43,7 @@ app.get('/login', (req, res) => {
 app.get('/callback', async (req, res) => {
     const code = req.query.code || null;
     const state = req.query.state || null;
-
+    console.log('State:', state); // Log the state for debugging
     if (!state) {
         res.redirect(
             '/#' +
@@ -96,7 +98,7 @@ app.get('/get_user_top_tracks', async (req, res) => {
 
         // Generate the prompt based on the artist
         const prompt = await generateTextToImagePrompt(artists);
-        res.send({ prompt });
+        res.send({ artists, prompt });
     } catch (error) {
         console.error('Error fetching user top tracks:', error.message);
         res.status(500).send('Internal Server Error');
@@ -123,7 +125,7 @@ const generateTextToImagePrompt = async (artistNames) => {
         Artist: Tame Impala, The Prodigy, Nirvana, Bon Iver
 
         **Output Example:**  
-        Create a surreal and atmospheric poster that blends the distinct styles of Tame Impala, The Prodigy, Nirvana, and Bon Iver into a cohesive visual masterpiece. Picture a dreamlike scene with a tranquil beach illuminated by soft neon lights, inspired by Tame Impala’s smooth, psychedelic sound. The ocean waves reflect vibrant pastel colors, blending into a dark, gritty cityscape where sharp geometric shapes and glitch effects explode outward, channeling The Prodigy’s high-energy, industrial spirit. Intertwined in the scene, decaying buildings, overgrown with vines, evoke the raw, rebellious tone of Nirvana’s grunge. In the foreground, glowing orbs drift lazily through a misty forest, casting soft light and creating an ethereal atmosphere that captures Bon Iver’s introspective, emotional depth. The overall color palette should blend cool blues, neon pinks, muted grays, and vibrant greens, while textures range from smooth, fluid gradients to gritty, distressed surfaces. The lighting should have dynamic contrasts, with soft glows merging into intense bursts of light, symbolizing the merging of calm and chaos. Style: surreal and atmospheric with a dreamlike quality, blending soft gradients with sharp, glitchy distortions and industrial textures. No text, faces, or human figures should appear.
+        A surreal and atmospheric poster that blends the distinct styles of Tame Impala, The Prodigy, Nirvana, and Bon Iver into a cohesive visual masterpiece. Picture a dreamlike scene with a tranquil beach illuminated by soft neon lights, inspired by Tame Impala’s smooth, psychedelic sound. The ocean waves reflect vibrant pastel colors, blending into a dark, gritty cityscape where sharp geometric shapes and glitch effects explode outward, channeling The Prodigy’s high-energy, industrial spirit. Intertwined in the scene, decaying buildings, overgrown with vines, evoke the raw, rebellious tone of Nirvana’s grunge. In the foreground, glowing orbs drift lazily through a misty forest, casting soft light and creating an ethereal atmosphere that captures Bon Iver’s introspective, emotional depth. The overall color palette should blend cool blues, neon pinks, muted grays, and vibrant greens, while textures range from smooth, fluid gradients to gritty, distressed surfaces. The lighting should have dynamic contrasts, with soft glows merging into intense bursts of light, symbolizing the merging of calm and chaos. Style: surreal and atmospheric with a dreamlike quality, blending soft gradients with sharp, glitchy distortions and industrial textures. No text, faces, or human figures should appear.
 
         **Now, the new input:**  
         Artists: ${artistNames.join(', ')}
