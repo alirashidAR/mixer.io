@@ -3,16 +3,17 @@ const querystring = require('querystring');
 const axios = require('axios');
 const dotenv = require('dotenv');
 const cors = require('cors');
+const { User } = require('./db'); // Import the User model
 
-dotenv.config(); // Load environment variables from .env file
+dotenv.config();
 
 const app = express();
 app.use(cors()); // Enable CORS for all routes
 
-const client_id = process.env.CLIENT_ID; // Ensure CLIENT_ID is set in environment variables
-const client_secret = process.env.CLIENT_SECRET; // Ensure CLIENT_SECRET is set in environment variables
-const openrouter_api_key = process.env.OPENROUTER_API_KEY; // Ensure OPENROUTER_API_KEY is set in environment variables
-const redirect_uri = 'https://spot-fro-5ex7.vercel.app/home'; // Update this if your redirect URI changes
+const client_id = process.env.CLIENT_ID;
+const client_secret = process.env.CLIENT_SECRET;
+const openrouter_api_key = process.env.OPENROUTER_API_KEY;
+const redirect_uri = 'https://spot-fro-5ex7.vercel.app/home'; // Update this as needed
 
 const generateRandomString = (length) => {
     let text = '';
@@ -70,6 +71,26 @@ app.get('/callback', async (req, res) => {
 
             const response = await axios(authOptions);
             const accessToken = response.data.access_token;
+            const refreshToken = response.data.refresh_token; // Optional: Store refresh token if you want to refresh access tokens
+
+            // Store the token in MongoDB for future use
+            const spotifyId = response.data.id; // Assuming Spotify API provides user ID in the response
+
+            // Check if user exists
+            let user = await User.findOne({ spotify_id: spotifyId });
+            if (!user) {
+                // If user doesn't exist, create a new record
+                user = new User({
+                    spotify_id: spotifyId,
+                    access_token: accessToken,
+                    refresh_token: refreshToken,
+                });
+                await user.save();
+            } else {
+                // If user exists, update access token
+                user.access_token = accessToken;
+                await user.save();
+            }
 
             res.send({
                 access_token: accessToken,
@@ -92,8 +113,7 @@ app.get('/get_user_top_tracks', async (req, res) => {
         });
 
         const allArtists = response.data.items.map((artist) => artist.name);
-        const artists = allArtists.slice(0, 2); // Get the top 4 artists
-        console.log('Top artist:', artists);  // Log for debugging
+        const artists = allArtists.slice(0, 2);
 
         // Generate the prompt based on the artist
         const prompt = await generateTextToImagePrompt(artists);
@@ -105,42 +125,28 @@ app.get('/get_user_top_tracks', async (req, res) => {
 });
 
 const generateTextToImagePrompt = async (artistNames) => {
-    // Constructing a dynamic prompt based on the artists' names
     const prompt = `
         You are a prompt engineer for a text-to-image model. 
         Given a list of music artists, generate a highly detailed and cohesive album-poster style image that blends their aesthetics into one harmonious scene.
-
-        Requirements for the prompt you output:
-        - Capture the distinct moods and energies of the artists' styles.
-        - Specify visual elements fitting each artist's sound: landscapes, objects, environments, or symbols, blending them naturally.
-        - Suggest a color palette that reflects the unique aesthetic of each artist while ensuring they work together harmoniously.
-        - Describe the overall art style (e.g., surreal, vaporwave, grunge, minimalistic, etc.).
-        - Mention lighting, textures, and dynamic elements to give the image life and energy.
-        - **Strictly avoid** including any text, faces, or human figures unless otherwise specified.
-        - Ensure the description feels original, vivid, and image-focused, with seamless integration of the different artistic influences.
-        - The final output should be one detailed paragraph, ready to feed directly into a text-to-image model.
 
         **Input Example:**  
         Artist: Tame Impala, The Prodigy, Nirvana, Bon Iver
 
         **Output Example:**  
-        A surreal and atmospheric poster that blends the distinct styles of Tame Impala, The Prodigy, Nirvana, and Bon Iver into a cohesive visual masterpiece. Picture a dreamlike scene with a tranquil beach illuminated by soft neon lights, inspired by Tame Impala’s smooth, psychedelic sound. The ocean waves reflect vibrant pastel colors, blending into a dark, gritty cityscape where sharp geometric shapes and glitch effects explode outward, channeling The Prodigy’s high-energy, industrial spirit. Intertwined in the scene, decaying buildings, overgrown with vines, evoke the raw, rebellious tone of Nirvana’s grunge. In the foreground, glowing orbs drift lazily through a misty forest, casting soft light and creating an ethereal atmosphere that captures Bon Iver’s introspective, emotional depth. The overall color palette should blend cool blues, neon pinks, muted grays, and vibrant greens, while textures range from smooth, fluid gradients to gritty, distressed surfaces. The lighting should have dynamic contrasts, with soft glows merging into intense bursts of light, symbolizing the merging of calm and chaos. Style: surreal and atmospheric with a dreamlike quality, blending soft gradients with sharp, glitchy distortions and industrial textures. No text, faces, or human figures should appear.
-
+        A surreal and atmospheric poster blending the styles of Tame Impala, The Prodigy, Nirvana, and Bon Iver into a cohesive visual masterpiece...
         **Now, the new input:**  
         Artists: ${artistNames.join(', ')}
     `;
 
-    // Call the text-to-image API with the generated prompt
     return await fetchTextToImageAPI(prompt);
 };
-
 
 const fetchTextToImageAPI = async (prompt) => {
     try {
         const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
             method: "POST",
             headers: {
-                "Authorization": "Bearer " + openrouter_api_key, // Make sure your API key is set here
+                "Authorization": "Bearer " + openrouter_api_key,
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
@@ -148,26 +154,19 @@ const fetchTextToImageAPI = async (prompt) => {
                 messages: [
                     {
                         role: "user",
-                        content: [
-                            {
-                                type: "text",
-                                text: `Generate an image for the following prompt: ${prompt}`,
-                            }
-                        ]
+                        content: [{ type: "text", text: `Generate an image for the following prompt: ${prompt}` }],
                     }
                 ]
             })
         });
 
         const data = await response.json();
-        console.log('Image generation response:', data); // Log the response for debugging
-        return data.choices[0].message.content; // Assuming the image URL is in the content field
+        return data.choices[0].message.content;
     } catch (error) {
         console.error('Error generating image:', error.message);
         throw new Error('Image generation failed');
     }
 };
-
 
 app.get('/', (req, res) => {
     res.send('Hello World!');
