@@ -9,11 +9,13 @@ dotenv.config(); // Load environment variables from .env file
 
 const app = express();
 app.use(cors()); // Enable CORS for all routes
+app.use(express.json()); // Parse JSON request bodies
 
 const client_id = process.env.CLIENT_ID; // Ensure CLIENT_ID is set in environment variables
 const client_secret = process.env.CLIENT_SECRET; // Ensure CLIENT_SECRET is set in environment variables
 const openrouter_api_key = process.env.OPENROUTER_API_KEY; // Ensure OPENROUTER_API_KEY is set in environment variables
-const redirect_uri = 'https://spot-fro-5ex7.vercel.app/home'; // Update this if your redirect URI changes
+const frontend_url = 'https://spot-fro-5ex7.vercel.app/'; // Your frontend URL
+const redirect_uri = 'https://mixer-io.vercel.app/callback'; // Backend callback URL
 
 const generateRandomString = (length) => {
     let text = '';
@@ -44,9 +46,10 @@ app.get('/login', (req, res) => {
 app.get('/callback', async (req, res) => {
     const code = req.query.code || null;
     const state = req.query.state || null;
+    
     if (!state) {
         res.redirect(
-            '/#' +
+            `${frontend_url}/#` +
                 querystring.stringify({
                     error: 'state_mismatch',
                 })
@@ -71,7 +74,7 @@ app.get('/callback', async (req, res) => {
 
             const response = await axios(authOptions);
             const accessToken = response.data.access_token;
-            const refreshToken = response.data.refresh_token; // Optional: Store refresh token if you want to refresh access tokens
+            const refreshToken = response.data.refresh_token;
 
             // Fetch user profile to get the Spotify user ID
             const userProfileResponse = await axios.get('https://api.spotify.com/v1/me', {
@@ -80,8 +83,9 @@ app.get('/callback', async (req, res) => {
                 },
             });
 
-            const spotifyId = userProfileResponse.id; // Fetch the Spotify user ID from the user profile response
+            const spotifyId = userProfileResponse.data.id; // Make sure to access the id from data property
             console.log('Spotify ID:', spotifyId); // Log for debugging
+            
             // Check if user exists in the database
             let user = await User.findOne({ spotify_id: spotifyId });
             if (!user) {
@@ -95,23 +99,73 @@ app.get('/callback', async (req, res) => {
             } else {
                 // If user exists, update access token
                 user.access_token = accessToken;
+                user.refresh_token = refreshToken;
                 await user.save();
             }
 
-            res.send({
-                access_token: accessToken,
-            });
+            // Redirect to frontend with a temporary token or user ID that can be used
+            // to fetch the real access token from your backend
+            res.redirect(
+                `${frontend_url}/home?` +
+                querystring.stringify({
+                    user_id: spotifyId,
+                    auth_success: true
+                })
+            );
         } catch (error) {
             console.error('Error fetching access token:', error.message);
-            res.status(500).send('Internal Server Error');
+            res.redirect(
+                `${frontend_url}/home?` +
+                querystring.stringify({
+                    error: 'authentication_error'
+                })
+            );
         }
     }
 });
 
-app.get('/get_user_top_tracks', async (req, res) => {
-    const access_token = req.query.access_token;
-
+// New endpoint to get access token from user ID
+app.post('/get_access_token', async (req, res) => {
+    const { user_id } = req.body;
+    
+    if (!user_id) {
+        return res.status(400).json({ error: 'User ID is required' });
+    }
+    
     try {
+        const user = await User.findOne({ spotify_id: user_id });
+        
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        
+        return res.json({ 
+            access_token: user.access_token 
+        });
+    } catch (error) {
+        console.error('Error fetching access token:', error.message);
+        return res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+app.get('/get_user_top_tracks', async (req, res) => {
+    const { user_id } = req.query;
+    
+    if (!user_id) {
+        return res.status(400).json({ error: 'User ID is required' });
+    }
+    
+    try {
+        // Get access token from database
+        const user = await User.findOne({ spotify_id: user_id });
+        
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        
+        const access_token = user.access_token;
+        
+        // Use the access token to fetch user's top artists
         const response = await axios.get('https://api.spotify.com/v1/me/top/artists', {
             headers: {
                 Authorization: `Bearer ${access_token}`,
@@ -119,15 +173,15 @@ app.get('/get_user_top_tracks', async (req, res) => {
         });
 
         const allArtists = response.data.items.map((artist) => artist.name);
-        const artists = allArtists.slice(0, 2); // Get the top 4 artists
-        console.log('Top artist:', artists);  // Log for debugging
+        const artists = allArtists.slice(0, 2); // Get the top 2 artists
+        console.log('Top artists:', artists);  // Log for debugging
 
-        // Generate the prompt based on the artist
+        // Generate the prompt based on the artists
         const prompt = await generateTextToImagePrompt(artists);
-        res.send({ artists, prompt });
+        res.json({ artists, prompt });
     } catch (error) {
         console.error('Error fetching user top tracks:', error.message);
-        res.status(500).send('Internal Server Error');
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 
@@ -151,7 +205,7 @@ const generateTextToImagePrompt = async (artistNames) => {
         Artist: Tame Impala, The Prodigy, Nirvana, Bon Iver
 
         **Output Example:**  
-        A surreal and atmospheric poster that blends the distinct styles of Tame Impala, The Prodigy, Nirvana, and Bon Iver into a cohesive visual masterpiece. Picture a dreamlike scene with a tranquil beach illuminated by soft neon lights, inspired by Tame Impala’s smooth, psychedelic sound. The ocean waves reflect vibrant pastel colors, blending into a dark, gritty cityscape where sharp geometric shapes and glitch effects explode outward, channeling The Prodigy’s high-energy, industrial spirit. Intertwined in the scene, decaying buildings, overgrown with vines, evoke the raw, rebellious tone of Nirvana’s grunge. In the foreground, glowing orbs drift lazily through a misty forest, casting soft light and creating an ethereal atmosphere that captures Bon Iver’s introspective, emotional depth. The overall color palette should blend cool blues, neon pinks, muted grays, and vibrant greens, while textures range from smooth, fluid gradients to gritty, distressed surfaces. The lighting should have dynamic contrasts, with soft glows merging into intense bursts of light, symbolizing the merging of calm and chaos. Style: surreal and atmospheric with a dreamlike quality, blending soft gradients with sharp, glitchy distortions and industrial textures. No text, faces, or human figures should appear.
+        A surreal and atmospheric poster that blends the distinct styles of Tame Impala, The Prodigy, Nirvana, and Bon Iver into a cohesive visual masterpiece. Picture a dreamlike scene with a tranquil beach illuminated by soft neon lights, inspired by Tame Impala's smooth, psychedelic sound. The ocean waves reflect vibrant pastel colors, blending into a dark, gritty cityscape where sharp geometric shapes and glitch effects explode outward, channeling The Prodigy's high-energy, industrial spirit. Intertwined in the scene, decaying buildings, overgrown with vines, evoke the raw, rebellious tone of Nirvana's grunge. In the foreground, glowing orbs drift lazily through a misty forest, casting soft light and creating an ethereal atmosphere that captures Bon Iver's introspective, emotional depth. The overall color palette should blend cool blues, neon pinks, muted grays, and vibrant greens, while textures range from smooth, fluid gradients to gritty, distressed surfaces. The lighting should have dynamic contrasts, with soft glows merging into intense bursts of light, symbolizing the merging of calm and chaos. Style: surreal and atmospheric with a dreamlike quality, blending soft gradients with sharp, glitchy distortions and industrial textures. No text, faces, or human figures should appear.
 
         **Now, the new input:**  
         Artists: ${artistNames.join(', ')}
@@ -161,13 +215,12 @@ const generateTextToImagePrompt = async (artistNames) => {
     return await fetchTextToImageAPI(prompt);
 };
 
-
 const fetchTextToImageAPI = async (prompt) => {
     try {
         const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
             method: "POST",
             headers: {
-                "Authorization": "Bearer " + openrouter_api_key, // Make sure your API key is set here
+                "Authorization": "Bearer " + openrouter_api_key,
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
@@ -194,7 +247,6 @@ const fetchTextToImageAPI = async (prompt) => {
         throw new Error('Image generation failed');
     }
 };
-
 
 app.get('/', (req, res) => {
     res.send('Hello World!');
