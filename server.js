@@ -3,6 +3,7 @@ const querystring = require('querystring');
 const axios = require('axios');
 const dotenv = require('dotenv');
 const cors = require('cors');
+const User = require('./db.js').User; // Import the User model from db.js
 
 dotenv.config(); // Load environment variables from .env file
 
@@ -70,6 +71,32 @@ app.get('/callback', async (req, res) => {
 
             const response = await axios(authOptions);
             const accessToken = response.data.access_token;
+            const refreshToken = response.data.refresh_token; // Optional: Store refresh token if you want to refresh access tokens
+
+            // Fetch user profile to get the Spotify user ID
+            const userProfileResponse = await axios.get('https://api.spotify.com/v1/me', {
+                headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                },
+            });
+
+            const spotifyId = userProfileResponse.data.id; // Fetch the Spotify user ID from the user profile response
+            console.log('Spotify ID:', spotifyId); // Log for debugging
+            // Check if user exists in the database
+            let user = await User.findOne({ spotify_id: spotifyId });
+            if (!user) {
+                // If user doesn't exist, create a new record
+                user = new User({
+                    spotify_id: spotifyId,
+                    access_token: accessToken,
+                    refresh_token: refreshToken,
+                });
+                await user.save();
+            } else {
+                // If user exists, update access token
+                user.access_token = accessToken;
+                await user.save();
+            }
 
             res.send({
                 access_token: accessToken,
