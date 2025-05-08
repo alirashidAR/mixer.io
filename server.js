@@ -80,7 +80,7 @@ app.get('/callback', async (req, res) => {
                 },
             });
 
-            const spotifyId = userProfileResponse.data.id; // Fetch the Spotify user ID from the user profile response
+            const spotifyId = userProfileResponse.id; // Fetch the Spotify user ID from the user profile response
             console.log('Spotify ID:', spotifyId); // Log for debugging
             // Check if user exists in the database
             let user = await User.findOne({ spotify_id: spotifyId });
