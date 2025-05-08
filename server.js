@@ -12,7 +12,7 @@ app.use(cors()); // Enable CORS for all routes
 const client_id = process.env.CLIENT_ID; // Ensure CLIENT_ID is set in environment variables
 const client_secret = process.env.CLIENT_SECRET; // Ensure CLIENT_SECRET is set in environment variables
 const openrouter_api_key = process.env.OPENROUTER_API_KEY; // Ensure OPENROUTER_API_KEY is set in environment variables
-const redirect_uri = 'https://spot-fro-5ex7.vercel.app/home'; // Update this if your redirect URI changes
+const redirect_uri = 'https://mixer-io.vercel.app/home'; // Update this if your redirect URI changes
 
 const generateRandomString = (length) => {
     let text = '';
@@ -43,7 +43,6 @@ app.get('/login', (req, res) => {
 app.get('/callback', async (req, res) => {
     const code = req.query.code || null;
     const state = req.query.state || null;
-    console.log('State:', state); // Log the state for debugging
     if (!state) {
         res.redirect(
             '/#' +
