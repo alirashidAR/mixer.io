@@ -4,19 +4,27 @@ const axios = require('axios');
 const dotenv = require('dotenv');
 const cors = require('cors');
 const db = require('./db'); // Import the database connection and User model
+const ratelimiter = require('express-rate-limit'); // Import rate limiter
 const { User,EarlyAccess } = db; // Destructure User from db
 
 dotenv.config(); // Load environment variables from .env file
 
 const app = express();
-app.use(cors()); // Enable CORS for all routes
-app.use(express.json()); // Parse JSON request bodies
+app.use(cors()); 
+app.use(express.json());
+app.use(express.urlencoded({ extended: true })); 
+app.use(ratelimiter({
+    windowMs: 15 * 60 * 1000, 
+    max: 100, 
+    message: 'Too many requests, please try again later.',
+})); 
 
-const client_id = process.env.CLIENT_ID; // Ensure CLIENT_ID is set in environment variables
-const client_secret = process.env.CLIENT_SECRET; // Ensure CLIENT_SECRET is set in environment variables
-const openrouter_api_key = process.env.OPENROUTER_API_KEY; // Ensure OPENROUTER_API_KEY is set in environment variables
-const frontend_url = 'https://spot-fro-5ex7.vercel.app/'; // Your frontend URL
-const redirect_uri = 'https://mixer-io.vercel.app/callback'; // Backend callback URL
+
+const client_id = process.env.CLIENT_ID; 
+const client_secret = process.env.CLIENT_SECRET; 
+const openrouter_api_key = process.env.OPENROUTER_API_KEY; 
+const frontend_url = 'https://spot-fro-5ex7.vercel.app/'; 
+const redirect_uri = 'https://mixer-io.vercel.app/callback';
 
 const generateRandomString = (length) => {
     let text = '';
@@ -87,7 +95,7 @@ app.get('/callback', async (req, res) => {
             const spotifyId = userProfileResponse.data.id; // Make sure to access the id from data property
             console.log('Spotify ID:', spotifyId); // Log for debugging
             
-            // Check if user exists in the database
+          
             let user = await User.findOne({
                 spotify_id: spotifyId,
             })
@@ -106,8 +114,6 @@ app.get('/callback', async (req, res) => {
                 await user.save();
             }
 
-            // Redirect to frontend with a temporary token or user ID that can be used
-            // to fetch the real access token from your backend
             res.redirect(
                 `${frontend_url}/home?` +
                 querystring.stringify({
@@ -127,7 +133,7 @@ app.get('/callback', async (req, res) => {
     }
 });
 
-// New endpoint to get access token from user ID
+
 app.post('/get_access_token', async (req, res) => {
     const { user_id } = req.body;
     
