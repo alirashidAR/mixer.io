@@ -3,7 +3,8 @@ const querystring = require('querystring');
 const axios = require('axios');
 const dotenv = require('dotenv');
 const cors = require('cors');
-const User = require('./db.js').User; // Import the User model from db.js
+const db = require('./db'); // Import the database connection and User model
+const { User,EarlyAccess } = db; // Destructure User from db
 
 dotenv.config(); // Load environment variables from .env file
 
@@ -87,7 +88,9 @@ app.get('/callback', async (req, res) => {
             console.log('Spotify ID:', spotifyId); // Log for debugging
             
             // Check if user exists in the database
-            let user = await User.findOne({ spotify_id: spotifyId });
+            let user = await User.findOne({
+                spotify_id: spotifyId,
+            })
             if (!user) {
                 // If user doesn't exist, create a new record
                 user = new User({
@@ -247,6 +250,44 @@ const fetchTextToImageAPI = async (prompt) => {
         throw new Error('Image generation failed');
     }
 };
+
+const earlyaccess = async (req, res) => {
+    const { email } = req.body;
+
+    if (!email) {
+        return res.status(400).json({ error: 'Email is required' });
+    }
+
+    // Basic email format check
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+        return res.status(400).json({ error: 'Invalid email format' });
+    }
+
+    try {
+        const count = await EarlyAccess.countDocuments();
+
+        if (count >= 20) {
+            return res.status(403).json({ error: 'Early access is full' });
+        }
+
+        const existing = await EarlyAccess.findOne({ spotify_email: email });
+
+        if (existing) {
+            return res.status(409).json({ error: 'Email already registered' });
+        }
+
+        const newUser = new EarlyAccess({ spotify_email: email });
+        await newUser.save();
+
+        return res.status(201).json({ message: 'Early access granted', user: newUser });
+    } catch (error) {
+        console.error('Error granting early access:', error.message);
+        return res.status(500).json({ error: 'Internal server error' });
+    }
+};
+
+app.post('/earlyaccess', earlyaccess);
 
 app.get('/', (req, res) => {
     res.send('Hello World!');

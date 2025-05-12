@@ -17,6 +17,12 @@ const userSchema = new mongoose.Schema({
   created_at: { type: Date, default: Date.now },
 });
 
-const User = mongoose.model('User', userSchema);
+const earlyAccessSchema = new mongoose.Schema({
+  spotify_email: { type: String, required: true },
+  created_at: { type: Date, default: Date.now },
+});
 
-module.exports = { User };
+const User = mongoose.model('User', userSchema);
+const EarlyAccess = mongoose.model('EarlyAccess', earlyAccessSchema);
+
+module.exports = { User, EarlyAccess };
