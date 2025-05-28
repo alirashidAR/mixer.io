@@ -273,7 +273,7 @@ const earlyaccess = async (req, res) => {
     try {
         const count = await EarlyAccess.countDocuments();
 
-        if (count >= 25) {
+        if (count >= 100) {
             return res.status(403).json({ error: 'Early access is full' });
         }
 
