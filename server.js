@@ -23,8 +23,8 @@ app.use(ratelimiter({
 const client_id = process.env.CLIENT_ID; 
 const client_secret = process.env.CLIENT_SECRET; 
 const openrouter_api_key = process.env.OPENROUTER_API_KEY; 
-const frontend_url = 'https://spot-fro-5ex7.vercel.app/'; 
-const redirect_uri = 'https://mixer-io.vercel.app/callback';
+const frontend_url = 'https://spot-fro.vercel.app/'; 
+const redirect_uri = 'http://127.0.0.1:5000/callback';
 
 const generateRandomString = (length) => {
     let text = '';
