@@ -3,199 +3,181 @@ const querystring = require('querystring');
 const axios = require('axios');
 const dotenv = require('dotenv');
 const cors = require('cors');
-const db = require('./db'); // Import the database connection and User model
-const ratelimiter = require('express-rate-limit'); // Import rate limiter
-const { User,EarlyAccess } = db; // Destructure User from db
+const session = require('express-session');
+const MongoStore = require('connect-mongo');
+const db = require('./db');
+const ratelimiter = require('express-rate-limit');
 
-dotenv.config(); // Load environment variables from .env file
+const { User, EarlyAccess } = db;
+
+dotenv.config();
 
 const app = express();
-app.use(cors()); 
+
+// Middleware
+app.use(cors({
+    credentials: true
+}));
 app.use(express.json());
-app.use(express.urlencoded({ extended: true })); 
+app.use(express.urlencoded({ extended: true }));
+
+// Session with MongoDB store
+app.use(session({
+    secret: process.env.SESSION_SECRET || 'some_secret_key',
+    resave: false,
+    saveUninitialized: false,
+    store: MongoStore.create({
+        mongoUrl: process.env.MONGO_URI,
+        collectionName: 'sessions',
+        ttl: 60 * 60 * 24 * 7, // 7 days
+    }),
+    cookie: {
+        secure: false, // true in production
+        httpOnly: true,
+        maxAge: 1000 * 60 * 60 * 24 * 7 // 7 days
+    }
+}));
+
 app.use(ratelimiter({
-    windowMs: 15 * 60 * 1000, 
-    max: 100, 
+    windowMs: 15 * 60 * 1000,
+    max: 100,
     message: 'Too many requests, please try again later.',
-})); 
+}));
 
-
-const client_id = process.env.CLIENT_ID; 
-const client_secret = process.env.CLIENT_SECRET; 
-const openrouter_api_key = process.env.OPENROUTER_API_KEY; 
-const frontend_url = 'https://spot-fro.vercel.app/'; 
+const client_id = process.env.CLIENT_ID;
+const client_secret = process.env.CLIENT_SECRET;
+const openrouter_api_key = process.env.OPENROUTER_API_KEY;
+const frontend_url = 'https://spot-fro.vercel.app';
 const redirect_uri = 'https://mixer-io.vercel.app/callback';
 
 const generateRandomString = (length) => {
     let text = '';
     const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-
     for (let i = 0; i < length; i++) {
         text += possible.charAt(Math.floor(Math.random() * possible.length));
     }
     return text;
 };
 
+// Routes
 app.get('/login', (req, res) => {
     const state = generateRandomString(16);
-    const scope = 'user-read-private user-read-email user-top-read';
+    req.session.state = state;
 
-    res.redirect(
-        'https://accounts.spotify.com/authorize?' +
-            querystring.stringify({
-                response_type: 'code',
-                client_id: client_id,
-                scope: scope,
-                redirect_uri: redirect_uri,
-                state: state,
-            })
-    );
+    const scope = 'user-read-private user-read-email user-top-read';
+    const authQueryParams = querystring.stringify({
+        response_type: 'code',
+        client_id,
+        scope,
+        redirect_uri,
+        state,
+        show_dialog: 'true'
+    });
+
+    res.redirect(`https://accounts.spotify.com/authorize?${authQueryParams}`);
 });
 
 app.get('/callback', async (req, res) => {
     const code = req.query.code || null;
     const state = req.query.state || null;
-    
-    if (!state) {
-        res.redirect(
-            `${frontend_url}/#` +
-                querystring.stringify({
-                    error: 'state_mismatch',
-                })
-        );
-    } else {
-        try {
-            const authOptions = {
-                url: 'https://accounts.spotify.com/api/token',
-                method: 'post',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    Authorization:
-                        'Basic ' +
-                        Buffer.from(client_id + ':' + client_secret).toString('base64'),
-                },
-                data: querystring.stringify({
-                    code: code,
-                    redirect_uri: redirect_uri,
-                    grant_type: 'authorization_code',
-                }),
-            };
 
-            const response = await axios(authOptions);
-            const accessToken = response.data.access_token;
-            const refreshToken = response.data.refresh_token;
+    console.log(req.session.state)
+    if (state !== req.session.state) {
+        return res.redirect(`${frontend_url}/#` + querystring.stringify({ error: 'state_mismatch' }));
+    }
 
-            // Fetch user profile to get the Spotify user ID
-            const userProfileResponse = await axios.get('https://api.spotify.com/v1/me', {
-                headers: {
-                    Authorization: `Bearer ${accessToken}`,
-                },
-            });
+    try {
+        const authOptions = {
+            url: 'https://accounts.spotify.com/api/token',
+            method: 'post',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                Authorization: 'Basic ' + Buffer.from(client_id + ':' + client_secret).toString('base64'),
+            },
+            data: querystring.stringify({
+                code,
+                redirect_uri,
+                grant_type: 'authorization_code',
+            }),
+        };
 
-            const spotifyId = userProfileResponse.data.id; // Make sure to access the id from data property
-            console.log('Spotify ID:', spotifyId); // Log for debugging
-            
-          
-            let user = await User.findOne({
+        const tokenResponse = await axios(authOptions);
+        const accessToken = tokenResponse.data.access_token;
+        const refreshToken = tokenResponse.data.refresh_token;
+
+        const userProfileResponse = await axios.get('https://api.spotify.com/v1/me', {
+            headers: { Authorization: `Bearer ${accessToken}` }
+        });
+
+        const spotifyId = userProfileResponse.data.id;
+
+        let user = await User.findOne({ spotify_id: spotifyId });
+        if (!user) {
+            user = new User({
                 spotify_id: spotifyId,
-            })
-            if (!user) {
-                // If user doesn't exist, create a new record
-                user = new User({
-                    spotify_id: spotifyId,
-                    access_token: accessToken,
-                    refresh_token: refreshToken,
-                });
-                await user.save();
-            } else {
-                // If user exists, update access token
-                user.access_token = accessToken;
-                user.refresh_token = refreshToken;
-                await user.save();
-            }
-
-            res.redirect(
-                `${frontend_url}/home?` +
-                querystring.stringify({
-                    user_id: spotifyId,
-                    auth_success: true
-                })
-            );
-        } catch (error) {
-            console.error('Error fetching access token:', error.message);
-            res.redirect(
-                `${frontend_url}/home?` +
-                querystring.stringify({
-                    error: 'authentication_error'
-                })
-            );
+                access_token: accessToken,
+                refresh_token: refreshToken,
+            });
+        } else {
+            user.access_token = accessToken;
+            user.refresh_token = refreshToken;
         }
+        await user.save();
+
+        res.redirect(`${frontend_url}/home?${querystring.stringify({
+            user_id: spotifyId,
+            auth_success: true
+        })}`);
+    } catch (error) {
+        console.error('Callback Error:', error.message);
+        res.redirect(`${frontend_url}/home?${querystring.stringify({
+            error: 'authentication_error'
+        })}`);
     }
 });
 
-
 app.post('/get_access_token', async (req, res) => {
     const { user_id } = req.body;
-    
-    if (!user_id) {
-        return res.status(400).json({ error: 'User ID is required' });
-    }
-    
+
+    if (!user_id) return res.status(400).json({ error: 'User ID is required' });
+
     try {
         const user = await User.findOne({ spotify_id: user_id });
-        
-        if (!user) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-        
-        return res.json({ 
-            access_token: user.access_token 
-        });
+        if (!user) return res.status(404).json({ error: 'User not found' });
+
+        return res.json({ access_token: user.access_token });
     } catch (error) {
-        console.error('Error fetching access token:', error.message);
+        console.error('Access Token Error:', error.message);
         return res.status(500).json({ error: 'Internal server error' });
     }
 });
 
 app.get('/get_user_top_tracks', async (req, res) => {
     const { user_id } = req.query;
-    
-    if (!user_id) {
-        return res.status(400).json({ error: 'User ID is required' });
-    }
-    
+
+    if (!user_id) return res.status(400).json({ error: 'User ID is required' });
+
     try {
-        // Get access token from database
         const user = await User.findOne({ spotify_id: user_id });
-        
-        if (!user) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-        
+        if (!user) return res.status(404).json({ error: 'User not found' });
+
         const access_token = user.access_token;
-        
-        // Use the access token to fetch user's top artists
         const response = await axios.get('https://api.spotify.com/v1/me/top/artists', {
-            headers: {
-                Authorization: `Bearer ${access_token}`,
-            },
+            headers: { Authorization: `Bearer ${access_token}` }
         });
 
         const allArtists = response.data.items.map((artist) => artist.name);
-        const artists = allArtists.slice(0, 2); // Get the top 2 artists
-        console.log('Top artists:', artists);  // Log for debugging
+        const artists = allArtists.slice(0, 2);
 
-        // Generate the prompt based on the artists
         const prompt = await generateTextToImagePrompt(artists);
         res.json({ artists, prompt });
     } catch (error) {
-        console.error('Error fetching user top tracks:', error.message);
-        res.status(500).json({ error: 'Internal server error' });
+        console.error('Top Tracks Error:', error.message);
+        return res.status(500).json({ error: 'Internal server error' });
     }
 });
 
 const generateTextToImagePrompt = async (artistNames) => {
-    // Constructing a dynamic prompt based on the artists' names
     const prompt = `
         You are a prompt engineer for a text-to-image model. 
         Given a list of music artists, generate a highly detailed and cohesive album-poster style image that blends their aesthetics into one harmonious scene.
@@ -219,8 +201,6 @@ const generateTextToImagePrompt = async (artistNames) => {
         **Now, the new input:**  
         Artists: ${artistNames.join(', ')}
     `;
-
-    // Call the text-to-image API with the generated prompt
     return await fetchTextToImageAPI(prompt);
 };
 
@@ -229,76 +209,54 @@ const fetchTextToImageAPI = async (prompt) => {
         const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
             method: "POST",
             headers: {
-                "Authorization": "Bearer " + openrouter_api_key,
+                "Authorization": `Bearer ${openrouter_api_key}`,
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
                 model: "deepseek/deepseek-chat-v3-0324:free",
-                messages: [
-                    {
-                        role: "user",
-                        content: [
-                            {
-                                type: "text",
-                                text: `Generate an image for the following prompt: ${prompt}`,
-                            }
-                        ]
-                    }
-                ]
+                messages: [{ role: "user", content: [{ type: "text", text: `Generate an image for the following prompt: ${prompt}` }] }]
             })
         });
 
         const data = await response.json();
-        console.log('Image generation response:', data); // Log the response for debugging
-        return data.choices[0].message.content; // Assuming the image URL is in the content field
+        return data.choices[0].message.content;
     } catch (error) {
-        console.error('Error generating image:', error.message);
+        console.error('Image API Error:', error.message);
         throw new Error('Image generation failed');
     }
 };
 
-const earlyaccess = async (req, res) => {
+// Early Access Route
+app.post('/earlyaccess', async (req, res) => {
     const { email } = req.body;
 
-    if (!email) {
-        return res.status(400).json({ error: 'Email is required' });
-    }
+    if (!email) return res.status(400).json({ error: 'Email is required' });
 
-    // Basic email format check
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-        return res.status(400).json({ error: 'Invalid email format' });
-    }
+    if (!emailRegex.test(email)) return res.status(400).json({ error: 'Invalid email format' });
 
     try {
         const count = await EarlyAccess.countDocuments();
-
-        if (count >= 100) {
-            return res.status(403).json({ error: 'Early access is full' });
-        }
+        if (count >= 100) return res.status(403).json({ error: 'Early access is full' });
 
         const existing = await EarlyAccess.findOne({ spotify_email: email });
-
-        if (existing) {
-            return res.status(409).json({ error: 'Email already registered' });
-        }
+        if (existing) return res.status(409).json({ error: 'Email already registered' });
 
         const newUser = new EarlyAccess({ spotify_email: email });
         await newUser.save();
-
         return res.status(201).json({ message: 'Early access granted', user: newUser });
     } catch (error) {
-        console.error('Error granting early access:', error.message);
+        console.error('Early Access Error:', error.message);
         return res.status(500).json({ error: 'Internal server error' });
     }
-};
-
-app.post('/earlyaccess', earlyaccess);
-
-app.get('/', (req, res) => {
-    res.send('Hello World!');
 });
 
-app.listen(5000, () => {
-    console.log('Server is running on http://127.0.0.1:5000');
+app.get('/', (req, res) => {
+    res.send('Server running. Use /login to start.');
+});
+
+// Start server
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+    console.log(`Server running on http://localhost:${PORT}`);
 });
